@@ -2,7 +2,7 @@
 // @id              noctis-clock
 // @name            NOCTIS CLOCK
 // @description     Elegant multi-style desktop clock overlay.
-// @version         1.7.0
+// @version         1.8.0
 // @author          Bayu
 // @include         explorer.exe
 // @architecture    x86-64
@@ -25,6 +25,9 @@
   $options:
   - light: Terang (putih, untuk wallpaper gelap)
   - dark: Gelap (hitam, untuk wallpaper terang)
+- Use24Hour: false
+  $name: Format 24 Jam
+  $description: Aktif = tampil 24 jam (contoh 17:30). Nonaktif = 12 jam dengan AM/PM (contoh 5:30 PM).
 - EnableDrag: true
   $name: Aktifkan Drag
   $description: Izinkan widget digeser menggunakan mouse.
@@ -67,51 +70,48 @@ static bool g_enableDrag = true;
 static bool g_enableResize = true;
 static int g_clockStyle = 0;
 static bool g_darkTheme = false;
-static POINT g_dragOffset = {0, 0};
+static bool g_use24Hour = false;
+static POINT g_dragOffset = { 0, 0 };
 static int g_resizeStartX = 0;
 static int g_resizeStartScale = SCALE_DEFAULT;
 
 static const UINT WM_NOCTIS_SETTINGS_CHANGED = WM_APP + 1;
 
-static const wchar_t *Days[] = {
+static const wchar_t* Days[] = {
     L"MIN", L"SEN", L"SEL", L"RAB",
-    L"KAM", L"JUM", L"SAB"};
+    L"KAM", L"JUM", L"SAB"
+};
 
-static const wchar_t *EnglishDays[] = {
+static const wchar_t* EnglishDays[] = {
     L"SUN", L"MON", L"TUE", L"WED",
-    L"THU", L"FRI", L"SAT"};
+    L"THU", L"FRI", L"SAT"
+};
 
-static const wchar_t *Months[] = {
+static const wchar_t* Months[] = {
     L"JANUARI", L"FEBRUARI", L"MARET",
     L"APRIL", L"MEI", L"JUNI",
     L"JULI", L"AGUSTUS", L"SEPTEMBER",
-    L"OKTOBER", L"NOVEMBER", L"DESEMBER"};
+    L"OKTOBER", L"NOVEMBER", L"DESEMBER"
+};
 
-static int ClampScale(int value)
-{
-    if (value < SCALE_MIN)
-        return SCALE_MIN;
-    if (value > SCALE_MAX)
-        return SCALE_MAX;
+static int ClampScale(int value) {
+    if (value < SCALE_MIN) return SCALE_MIN;
+    if (value > SCALE_MAX) return SCALE_MAX;
     return value;
 }
 
-static int ScaledWidth()
-{
+static int ScaledWidth() {
     return g_width * g_scale / 100;
 }
 
-static int ScaledHeight()
-{
+static int ScaledHeight() {
     return g_height * g_scale / 100;
 }
 
 // Tema gelap = semua warna dibalik (putih -> hitam, abu terang -> abu gelap).
 // Nilai minimum 24 dijaga agar tidak mendekati KEY_COLOR (transparan).
-static COLORREF Themed(COLORREF c)
-{
-    if (!g_darkTheme)
-    {
+static COLORREF Themed(COLORREF c) {
+    if (!g_darkTheme) {
         return c;
     }
 
@@ -119,37 +119,38 @@ static COLORREF Themed(COLORREF c)
     int g = 255 - GetGValue(c);
     int b = 255 - GetBValue(c);
 
-    if (r < 24)
-        r = 24;
-    if (g < 24)
-        g = 24;
-    if (b < 24)
-        b = 24;
+    if (r < 24) r = 24;
+    if (g < 24) g = 24;
+    if (b < 24) b = 24;
 
     return RGB(r, g, b);
 }
 
-static void LoadSettings()
-{
+// Jam yang ditampilkan sesuai format (24 jam atau 12 jam)
+static int DisplayHour(const SYSTEMTIME& time) {
+    if (g_use24Hour) {
+        return time.wHour;
+    }
+
+    int hour = time.wHour % 12;
+
+    return hour == 0 ? 12 : hour;
+}
+
+static void LoadSettings() {
+    g_use24Hour = Wh_GetIntSetting(L"Use24Hour") != 0;
     g_enableDrag = Wh_GetIntSetting(L"EnableDrag") != 0;
     g_enableResize = Wh_GetIntSetting(L"EnableResize") != 0;
 
     PCWSTR style = Wh_GetStringSetting(L"ClockStyle");
 
-    if (wcscmp(style, L"thursday") == 0 || wcscmp(style, L"1") == 0)
-    {
+    if (wcscmp(style, L"thursday") == 0 || wcscmp(style, L"1") == 0) {
         g_clockStyle = 1;
-    }
-    else if (wcscmp(style, L"japanese") == 0 || wcscmp(style, L"2") == 0)
-    {
+    } else if (wcscmp(style, L"japanese") == 0 || wcscmp(style, L"2") == 0) {
         g_clockStyle = 2;
-    }
-    else if (wcscmp(style, L"overlap") == 0 || wcscmp(style, L"3") == 0)
-    {
+    } else if (wcscmp(style, L"overlap") == 0 || wcscmp(style, L"3") == 0) {
         g_clockStyle = 3;
-    }
-    else
-    {
+    } else {
         g_clockStyle = 0;
     }
 
@@ -160,8 +161,7 @@ static void LoadSettings()
     Wh_FreeStringSetting(theme);
 }
 
-static void LoadPosition()
-{
+static void LoadPosition() {
     g_posX = Wh_GetIntValue(L"PosX", DEFAULT_POS_X);
     g_posY = Wh_GetIntValue(L"PosY", DEFAULT_POS_Y);
 
@@ -170,42 +170,35 @@ static void LoadPosition()
     int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
     int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
 
-    if (g_posX < vx || g_posX > vx + vw - 50)
-    {
+    if (g_posX < vx || g_posX > vx + vw - 50) {
         g_posX = DEFAULT_POS_X;
     }
 
-    if (g_posY < vy || g_posY > vy + vh - 50)
-    {
+    if (g_posY < vy || g_posY > vy + vh - 50) {
         g_posY = DEFAULT_POS_Y;
     }
 
     Wh_Log(L"NOCTIS: Loaded position X=%d Y=%d", g_posX, g_posY);
 }
 
-static void SavePosition()
-{
+static void SavePosition() {
     Wh_SetIntValue(L"PosX", g_posX);
     Wh_SetIntValue(L"PosY", g_posY);
 }
 
-static void LoadScale()
-{
+static void LoadScale() {
     g_scale = ClampScale(Wh_GetIntValue(L"Scale", SCALE_DEFAULT));
     Wh_Log(L"NOCTIS: Loaded scale %d%%", g_scale);
 }
 
-static void SaveScale()
-{
+static void SaveScale() {
     Wh_SetIntValue(L"Scale", g_scale);
 }
 
-static void ApplyScale(HWND hwnd, int newScale)
-{
+static void ApplyScale(HWND hwnd, int newScale) {
     newScale = ClampScale(newScale);
 
-    if (newScale == g_scale)
-    {
+    if (newScale == g_scale) {
         return;
     }
 
@@ -219,22 +212,20 @@ static void ApplyScale(HWND hwnd, int newScale)
         ScaledWidth(),
         ScaledHeight(),
         SWP_NOMOVE |
-            SWP_NOZORDER |
-            SWP_NOACTIVATE);
+        SWP_NOZORDER |
+        SWP_NOACTIVATE
+    );
 
     InvalidateRect(hwnd, nullptr, FALSE);
 }
 
-static void ApplyInteractionSettings(HWND hwnd)
-{
-    if (!g_enableDrag && g_dragging)
-    {
+static void ApplyInteractionSettings(HWND hwnd) {
+    if (!g_enableDrag && g_dragging) {
         g_dragging = false;
         ReleaseCapture();
     }
 
-    if (!g_enableResize && g_resizing)
-    {
+    if (!g_enableResize && g_resizing) {
         g_resizing = false;
         ReleaseCapture();
     }
@@ -242,12 +233,9 @@ static void ApplyInteractionSettings(HWND hwnd)
     LONG_PTR exStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
 
     // Klik tembus hanya jika drag DAN resize dua-duanya dimatikan
-    if (g_enableDrag || g_enableResize)
-    {
+    if (g_enableDrag || g_enableResize) {
         exStyle &= ~WS_EX_TRANSPARENT;
-    }
-    else
-    {
+    } else {
         exStyle |= WS_EX_TRANSPARENT;
     }
 
@@ -261,17 +249,18 @@ static void ApplyInteractionSettings(HWND hwnd)
         0,
         0,
         SWP_NOMOVE |
-            SWP_NOSIZE |
-            SWP_NOZORDER |
-            SWP_NOACTIVATE |
-            SWP_FRAMECHANGED);
+        SWP_NOSIZE |
+        SWP_NOZORDER |
+        SWP_NOACTIVATE |
+        SWP_FRAMECHANGED
+    );
 }
 
 static HFONT CreateClockFont(
     int size,
     int weight,
-    const wchar_t *family)
-{
+    const wchar_t* family
+) {
     return CreateFontW(
         -size,
         0,
@@ -286,23 +275,23 @@ static HFONT CreateClockFont(
         CLIP_DEFAULT_PRECIS,
         ANTIALIASED_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE,
-        family);
+        family
+    );
 }
 
 static void DrawTextStyled(
     HDC dc,
-    const wchar_t *text,
+    const wchar_t* text,
     int x,
     int y,
     int size,
     int weight,
     COLORREF color,
-    const wchar_t *family)
-{
+    const wchar_t* family
+) {
     HFONT font = CreateClockFont(size, weight, family);
 
-    if (!font)
-    {
+    if (!font) {
         return;
     }
 
@@ -319,18 +308,17 @@ static void DrawTextStyled(
 
 static void DrawTextCentered(
     HDC dc,
-    const wchar_t *text,
+    const wchar_t* text,
     int centerX,
     int y,
     int size,
     int weight,
     COLORREF color,
-    const wchar_t *family)
-{
+    const wchar_t* family
+) {
     HFONT font = CreateClockFont(size, weight, family);
 
-    if (!font)
-    {
+    if (!font) {
         return;
     }
 
@@ -341,7 +329,8 @@ static void DrawTextCentered(
         dc,
         text,
         (int)wcslen(text),
-        &textSize);
+        &textSize
+    );
 
     SetTextColor(dc, Themed(color));
     SetBkMode(dc, TRANSPARENT);
@@ -351,7 +340,8 @@ static void DrawTextCentered(
         centerX - textSize.cx / 2,
         y,
         text,
-        (int)wcslen(text));
+        (int)wcslen(text)
+    );
 
     SelectObject(dc, oldFont);
     DeleteObject(font);
@@ -364,12 +354,11 @@ static void DrawLine(
     int x2,
     int y2,
     int thickness,
-    COLORREF color)
-{
+    COLORREF color
+) {
     HPEN pen = CreatePen(PS_SOLID, thickness, Themed(color));
 
-    if (!pen)
-    {
+    if (!pen) {
         return;
     }
 
@@ -382,37 +371,43 @@ static void DrawLine(
     DeleteObject(pen);
 }
 
-static void DrawNoctis(HDC dc, const SYSTEMTIME &time)
-{
-    int hour = time.wHour % 12;
-
-    if (hour == 0)
-    {
-        hour = 12;
-    }
+static void DrawNoctis(HDC dc, const SYSTEMTIME& time) {
+    int hour = DisplayHour(time);
 
     wchar_t clock[32];
     wchar_t date[64];
 
-    swprintf_s(
-        clock,
-        L"%d:%02d %s",
-        hour,
-        time.wMinute,
-        time.wHour >= 12 ? L"PM" : L"AM");
+    if (g_use24Hour) {
+        swprintf_s(
+            clock,
+            L"%02d:%02d",
+            hour,
+            time.wMinute
+        );
+    } else {
+        swprintf_s(
+            clock,
+            L"%d:%02d %s",
+            hour,
+            time.wMinute,
+            time.wHour >= 12 ? L"PM" : L"AM"
+        );
+    }
 
     swprintf_s(
         date,
         L"%02d %s %04d",
         time.wDay,
         Months[time.wMonth - 1],
-        time.wYear);
+        time.wYear
+    );
 
     POINT panel[] = {
         {235, 72},
         {455, 72},
         {455, 141},
-        {205, 141}};
+        {205, 141}
+    };
 
     HBRUSH white = CreateSolidBrush(Themed(RGB(248, 248, 248)));
     HPEN whitePen = CreatePen(PS_SOLID, 1, Themed(RGB(248, 248, 248)));
@@ -436,7 +431,8 @@ static void DrawNoctis(HDC dc, const SYSTEMTIME &time)
         88,
         FW_BOLD,
         RGB(245, 245, 245),
-        L"Arial");
+        L"Arial"
+    );
 
     DrawTextStyled(
         dc,
@@ -446,7 +442,8 @@ static void DrawNoctis(HDC dc, const SYSTEMTIME &time)
         35,
         FW_BOLD,
         RGB(55, 55, 55),
-        L"Arial");
+        L"Arial"
+    );
 
     DrawTextStyled(
         dc,
@@ -456,7 +453,8 @@ static void DrawNoctis(HDC dc, const SYSTEMTIME &time)
         15,
         FW_BOLD,
         RGB(245, 245, 245),
-        L"Arial");
+        L"Arial"
+    );
 
     DrawLine(
         dc,
@@ -465,11 +463,11 @@ static void DrawNoctis(HDC dc, const SYSTEMTIME &time)
         130,
         255,
         2,
-        RGB(245, 245, 245));
+        RGB(245, 245, 245)
+    );
 }
 
-static void DrawThursday(HDC dc, const SYSTEMTIME &time)
-{
+static void DrawThursday(HDC dc, const SYSTEMTIME& time) {
     wchar_t day[32];
     wchar_t date[64];
     wchar_t clock[32];
@@ -477,27 +475,25 @@ static void DrawThursday(HDC dc, const SYSTEMTIME &time)
     swprintf_s(
         day,
         L"%s",
-        Days[time.wDayOfWeek]);
+        Days[time.wDayOfWeek]
+    );
 
     swprintf_s(
         date,
         L"%02d %s %04d",
         time.wDay,
         Months[time.wMonth - 1],
-        time.wYear);
+        time.wYear
+    );
 
-    int hour = time.wHour % 12;
-
-    if (hour == 0)
-    {
-        hour = 12;
-    }
+    int hour = DisplayHour(time);
 
     swprintf_s(
         clock,
         L"%02d:%02d",
         hour,
-        time.wMinute);
+        time.wMinute
+    );
 
     DrawTextCentered(
         dc,
@@ -507,7 +503,8 @@ static void DrawThursday(HDC dc, const SYSTEMTIME &time)
         100,
         600,
         RGB(245, 245, 245),
-        L"Oxanium");
+        L"Oxanium"
+    );
 
     DrawTextCentered(
         dc,
@@ -517,7 +514,8 @@ static void DrawThursday(HDC dc, const SYSTEMTIME &time)
         16,
         500,
         RGB(190, 190, 190),
-        L"Oxanium");
+        L"Oxanium"
+    );
 
     DrawLine(
         dc,
@@ -526,7 +524,8 @@ static void DrawThursday(HDC dc, const SYSTEMTIME &time)
         345,
         170,
         1,
-        RGB(130, 130, 130));
+        RGB(130, 130, 130)
+    );
 
     DrawTextCentered(
         dc,
@@ -536,43 +535,43 @@ static void DrawThursday(HDC dc, const SYSTEMTIME &time)
         43,
         400,
         RGB(245, 245, 245),
-        L"Oxanium");
+        L"Oxanium"
+    );
 
-    DrawTextCentered(
-        dc,
-        time.wHour >= 12 ? L"PM" : L"AM",
-        260,
-        238,
-        13,
-        500,
-        RGB(175, 175, 175),
-        L"Oxanium");
+    if (!g_use24Hour) {
+        DrawTextCentered(
+            dc,
+            time.wHour >= 12 ? L"PM" : L"AM",
+            260,
+            238,
+            13,
+            500,
+            RGB(175, 175, 175),
+            L"Oxanium"
+        );
+    }
 }
 
-static void DrawJapanese(HDC dc, const SYSTEMTIME &time)
-{
+static void DrawJapanese(HDC dc, const SYSTEMTIME& time) {
     wchar_t date[64];
     wchar_t clock[32];
 
-    int hour = time.wHour % 12;
-
-    if (hour == 0)
-    {
-        hour = 12;
-    }
+    int hour = DisplayHour(time);
 
     swprintf_s(
         date,
         L"%04d . %02d . %02d",
         time.wYear,
         time.wMonth,
-        time.wDay);
+        time.wDay
+    );
 
     swprintf_s(
         clock,
         L"%02d:%02d",
         hour,
-        time.wMinute);
+        time.wMinute
+    );
 
     DrawLine(
         dc,
@@ -581,18 +580,21 @@ static void DrawJapanese(HDC dc, const SYSTEMTIME &time)
         260,
         55,
         1,
-        RGB(220, 220, 220));
+        RGB(220, 220, 220)
+    );
 
     DrawTextCentered(
         dc,
-        time.wHour < 12 ? L"GOOD MORNING" : time.wHour < 18 ? L"GOOD AFTERNOON"
-                                                            : L"GOOD EVENING",
+        time.wHour < 12 ? L"GOOD MORNING" :
+        time.wHour < 18 ? L"GOOD AFTERNOON" :
+        L"GOOD EVENING",
         260,
         66,
         13,
         700,
         RGB(220, 220, 220),
-        L"JAPAN RAMEN");
+        L"JAPAN RAMEN"
+    );
 
     DrawTextCentered(
         dc,
@@ -602,7 +604,8 @@ static void DrawJapanese(HDC dc, const SYSTEMTIME &time)
         72,
         700,
         RGB(245, 245, 245),
-        L"JAPAN RAMEN");
+        L"JAPAN RAMEN"
+    );
 
     DrawTextCentered(
         dc,
@@ -612,7 +615,8 @@ static void DrawJapanese(HDC dc, const SYSTEMTIME &time)
         14,
         500,
         RGB(190, 190, 190),
-        L"Zen Kaku Gothic New");
+        L"Zen Kaku Gothic New"
+    );
 
     DrawTextCentered(
         dc,
@@ -622,7 +626,8 @@ static void DrawJapanese(HDC dc, const SYSTEMTIME &time)
         28,
         700,
         RGB(245, 245, 245),
-        L"Zen Kaku Gothic New");
+        L"Zen Kaku Gothic New"
+    );
 
     DrawLine(
         dc,
@@ -631,21 +636,16 @@ static void DrawJapanese(HDC dc, const SYSTEMTIME &time)
         260,
         283,
         1,
-        RGB(220, 220, 220));
+        RGB(220, 220, 220)
+    );
 }
 
-static void DrawOverlap(HDC dc, const SYSTEMTIME &time)
-{
+static void DrawOverlap(HDC dc, const SYSTEMTIME& time) {
     wchar_t hourText[8];
     wchar_t minuteText[8];
     wchar_t date[64];
 
-    int hour = time.wHour % 12;
-
-    if (hour == 0)
-    {
-        hour = 12;
-    }
+    int hour = DisplayHour(time);
 
     swprintf_s(hourText, L"%02d", hour);
     swprintf_s(minuteText, L"%02d", time.wMinute);
@@ -656,7 +656,8 @@ static void DrawOverlap(HDC dc, const SYSTEMTIME &time)
         Days[time.wDayOfWeek],
         time.wDay,
         Months[time.wMonth - 1],
-        time.wYear);
+        time.wYear
+    );
 
     DrawTextStyled(
         dc,
@@ -666,7 +667,8 @@ static void DrawOverlap(HDC dc, const SYSTEMTIME &time)
         160,
         200,
         RGB(245, 245, 245),
-        L"Montserrat");
+        L"Montserrat"
+    );
 
     DrawTextStyled(
         dc,
@@ -676,17 +678,21 @@ static void DrawOverlap(HDC dc, const SYSTEMTIME &time)
         160,
         200,
         RGB(245, 245, 245),
-        L"Montserrat");
+        L"Montserrat"
+    );
 
-    DrawTextStyled(
-        dc,
-        time.wHour >= 12 ? L"PM" : L"AM",
-        365,
-        105,
-        54,
-        400,
-        RGB(220, 220, 220),
-        L"Allura");
+    if (!g_use24Hour) {
+        DrawTextStyled(
+            dc,
+            time.wHour >= 12 ? L"PM" : L"AM",
+            365,
+            105,
+            54,
+            400,
+            RGB(220, 220, 220),
+            L"Allura"
+        );
+    }
 
     DrawLine(
         dc,
@@ -695,7 +701,8 @@ static void DrawOverlap(HDC dc, const SYSTEMTIME &time)
         478,
         220,
         1,
-        RGB(110, 110, 110));
+        RGB(110, 110, 110)
+    );
 
     DrawTextStyled(
         dc,
@@ -705,16 +712,15 @@ static void DrawOverlap(HDC dc, const SYSTEMTIME &time)
         15,
         500,
         RGB(225, 225, 225),
-        L"Montserrat");
+        L"Montserrat"
+    );
 }
 
-static void DrawClock(HDC dc)
-{
+static void DrawClock(HDC dc) {
     SYSTEMTIME time;
     GetLocalTime(&time);
 
-    switch (g_clockStyle)
-    {
+    switch (g_clockStyle) {
     case 1:
         DrawThursday(dc, time);
         break;
@@ -737,10 +743,9 @@ static LRESULT CALLBACK ClockProc(
     HWND hwnd,
     UINT msg,
     WPARAM wp,
-    LPARAM lp)
-{
-    switch (msg)
-    {
+    LPARAM lp
+) {
+    switch (msg) {
     case WM_CREATE:
         SetTimer(hwnd, 1, 1000, nullptr);
         ApplyInteractionSettings(hwnd);
@@ -756,19 +761,20 @@ static LRESULT CALLBACK ClockProc(
         InvalidateRect(hwnd, nullptr, FALSE);
 
         Wh_Log(
-            L"NOCTIS: Settings changed. Style=%d Dark=%d Drag=%d Resize=%d",
+            L"NOCTIS: Settings changed. Style=%d Dark=%d 24h=%d Drag=%d Resize=%d",
             g_clockStyle,
             g_darkTheme,
+            g_use24Hour,
             g_enableDrag,
-            g_enableResize);
+            g_enableResize
+        );
 
         return 0;
 
     case WM_ERASEBKGND:
         return 1;
 
-    case WM_PAINT:
-    {
+    case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC dc = BeginPaint(hwnd, &ps);
 
@@ -778,27 +784,25 @@ static LRESULT CALLBACK ClockProc(
         int width = rect.right - rect.left;
         int height = rect.bottom - rect.top;
 
-        if (width > 0 && height > 0)
-        {
+        if (width > 0 && height > 0) {
             HDC memoryDC = CreateCompatibleDC(dc);
 
-            if (memoryDC)
-            {
+            if (memoryDC) {
                 HBITMAP bitmap = CreateCompatibleBitmap(
                     dc,
                     width,
-                    height);
+                    height
+                );
 
-                if (bitmap)
-                {
+                if (bitmap) {
                     HBITMAP oldBitmap = (HBITMAP)SelectObject(
                         memoryDC,
-                        bitmap);
+                        bitmap
+                    );
 
                     HBRUSH background = CreateSolidBrush(KEY_COLOR);
 
-                    if (background)
-                    {
+                    if (background) {
                         FillRect(memoryDC, &rect, background);
                         DeleteObject(background);
                     }
@@ -824,7 +828,8 @@ static LRESULT CALLBACK ClockProc(
                         memoryDC,
                         0,
                         0,
-                        SRCCOPY);
+                        SRCCOPY
+                    );
 
                     SelectObject(memoryDC, oldBitmap);
                     DeleteObject(bitmap);
@@ -838,10 +843,8 @@ static LRESULT CALLBACK ClockProc(
         return 0;
     }
 
-    case WM_LBUTTONDOWN:
-    {
-        if (!g_enableDrag || g_resizing)
-        {
+    case WM_LBUTTONDOWN: {
+        if (!g_enableDrag || g_resizing) {
             return DefWindowProcW(hwnd, msg, wp, lp);
         }
 
@@ -854,10 +857,8 @@ static LRESULT CALLBACK ClockProc(
         return 0;
     }
 
-    case WM_RBUTTONDOWN:
-    {
-        if (!g_enableResize || g_dragging)
-        {
+    case WM_RBUTTONDOWN: {
+        if (!g_enableResize || g_dragging) {
             return DefWindowProcW(hwnd, msg, wp, lp);
         }
 
@@ -872,10 +873,8 @@ static LRESULT CALLBACK ClockProc(
         return 0;
     }
 
-    case WM_MBUTTONDOWN:
-    {
-        if (g_enableResize)
-        {
+    case WM_MBUTTONDOWN: {
+        if (g_enableResize) {
             ApplyScale(hwnd, SCALE_DEFAULT);
             SaveScale();
             return 0;
@@ -884,18 +883,15 @@ static LRESULT CALLBACK ClockProc(
         return DefWindowProcW(hwnd, msg, wp, lp);
     }
 
-    case WM_MOUSEWHEEL:
-    {
-        if (!g_enableResize)
-        {
+    case WM_MOUSEWHEEL: {
+        if (!g_enableResize) {
             return DefWindowProcW(hwnd, msg, wp, lp);
         }
 
         int delta = GET_WHEEL_DELTA_WPARAM(wp);
         int steps = delta / WHEEL_DELTA;
 
-        if (steps == 0)
-        {
+        if (steps == 0) {
             steps = delta > 0 ? 1 : -1;
         }
 
@@ -905,10 +901,8 @@ static LRESULT CALLBACK ClockProc(
         return 0;
     }
 
-    case WM_MOUSEMOVE:
-    {
-        if (g_dragging && g_enableDrag)
-        {
+    case WM_MOUSEMOVE: {
+        if (g_dragging && g_enableDrag) {
             HWND parent = GetParent(hwnd);
 
             POINT cursor;
@@ -923,11 +917,10 @@ static LRESULT CALLBACK ClockProc(
                 0,
                 0,
                 SWP_NOSIZE |
-                    SWP_NOZORDER |
-                    SWP_NOACTIVATE);
-        }
-        else if (g_resizing && g_enableResize)
-        {
+                SWP_NOZORDER |
+                SWP_NOACTIVATE
+            );
+        } else if (g_resizing && g_enableResize) {
             POINT cursor;
             GetCursorPos(&cursor);
 
@@ -941,17 +934,15 @@ static LRESULT CALLBACK ClockProc(
         return 0;
     }
 
-    case WM_LBUTTONUP:
-    {
-        if (g_dragging)
-        {
+    case WM_LBUTTONUP: {
+        if (g_dragging) {
             g_dragging = false;
             ReleaseCapture();
 
             RECT r;
             GetWindowRect(hwnd, &r);
 
-            POINT pos = {r.left, r.top};
+            POINT pos = { r.left, r.top };
             ScreenToClient(GetParent(hwnd), &pos);
 
             g_posX = pos.x;
@@ -962,16 +953,15 @@ static LRESULT CALLBACK ClockProc(
             Wh_Log(
                 L"NOCTIS: new position X=%ld Y=%ld",
                 g_posX,
-                g_posY);
+                g_posY
+            );
         }
 
         return 0;
     }
 
-    case WM_RBUTTONUP:
-    {
-        if (g_resizing)
-        {
+    case WM_RBUTTONUP: {
+        if (g_resizing) {
             g_resizing = false;
             ReleaseCapture();
 
@@ -999,16 +989,16 @@ static LRESULT CALLBACK ClockProc(
 
 static BOOL CALLBACK FindWorkerCallback(
     HWND hwnd,
-    LPARAM parameter)
-{
+    LPARAM parameter
+) {
     HWND defView = FindWindowExW(
         hwnd,
         nullptr,
         L"SHELLDLL_DefView",
-        nullptr);
+        nullptr
+    );
 
-    if (!defView)
-    {
+    if (!defView) {
         return TRUE;
     }
 
@@ -1016,23 +1006,21 @@ static BOOL CALLBACK FindWorkerCallback(
         nullptr,
         hwnd,
         L"WorkerW",
-        nullptr);
+        nullptr
+    );
 
-    if (worker)
-    {
-        *(HWND *)parameter = worker;
+    if (worker) {
+        *(HWND*)parameter = worker;
         return FALSE;
     }
 
     return TRUE;
 }
 
-static HWND FindDesktopWorkerW()
-{
+static HWND FindDesktopWorkerW() {
     HWND progman = FindWindowW(L"Progman", nullptr);
 
-    if (!progman)
-    {
+    if (!progman) {
         return nullptr;
     }
 
@@ -1045,30 +1033,29 @@ static HWND FindDesktopWorkerW()
         0,
         SMTO_NORMAL,
         1000,
-        &result);
+        &result
+    );
 
     HWND worker = nullptr;
 
     EnumWindows(
         FindWorkerCallback,
-        (LPARAM)&worker);
+        (LPARAM)&worker
+    );
 
     return worker;
 }
 
-static bool CreateClockWindow()
-{
+static bool CreateClockWindow() {
     WNDCLASSW wc = {};
     wc.lpfnWndProc = ClockProc;
     wc.hInstance = GetModuleHandleW(nullptr);
     wc.lpszClassName = L"NoctisClockWindow";
 
-    if (!RegisterClassW(&wc))
-    {
+    if (!RegisterClassW(&wc)) {
         DWORD error = GetLastError();
 
-        if (error != ERROR_CLASS_ALREADY_EXISTS)
-        {
+        if (error != ERROR_CLASS_ALREADY_EXISTS) {
             Wh_Log(L"NOCTIS: RegisterClass failed: %lu", error);
             return false;
         }
@@ -1076,14 +1063,12 @@ static bool CreateClockWindow()
 
     HWND parent = FindDesktopWorkerW();
 
-    if (!parent)
-    {
+    if (!parent) {
         Wh_Log(L"NOCTIS: WorkerW not found, trying Progman");
         parent = FindWindowW(L"Progman", nullptr);
     }
 
-    if (!parent)
-    {
+    if (!parent) {
         Wh_Log(L"NOCTIS: No desktop parent available");
         return false;
     }
@@ -1094,8 +1079,7 @@ static bool CreateClockWindow()
                     WS_EX_TOOLWINDOW |
                     WS_EX_NOACTIVATE;
 
-    if (!g_enableDrag && !g_enableResize)
-    {
+    if (!g_enableDrag && !g_enableResize) {
         exStyle |= WS_EX_TRANSPARENT;
     }
 
@@ -1104,7 +1088,7 @@ static bool CreateClockWindow()
         wc.lpszClassName,
         L"NOCTIS CLOCK",
         WS_CHILD |
-            WS_VISIBLE,
+        WS_VISIBLE,
         g_posX,
         g_posY,
         ScaledWidth(),
@@ -1112,23 +1096,24 @@ static bool CreateClockWindow()
         parent,
         nullptr,
         wc.hInstance,
-        nullptr);
+        nullptr
+    );
 
-    if (!g_window)
-    {
+    if (!g_window) {
         Wh_Log(L"NOCTIS: CreateWindowEx failed: %lu", GetLastError());
         return false;
     }
 
     if (!SetLayeredWindowAttributes(
-            g_window,
-            KEY_COLOR,
-            0,
-            LWA_COLORKEY))
-    {
+        g_window,
+        KEY_COLOR,
+        0,
+        LWA_COLORKEY
+    )) {
         Wh_Log(
             L"NOCTIS: SetLayeredWindowAttributes failed: %lu",
-            GetLastError());
+            GetLastError()
+        );
 
         DestroyWindow(g_window);
         g_window = nullptr;
@@ -1142,7 +1127,8 @@ static bool CreateClockWindow()
         g_posY,
         ScaledWidth(),
         ScaledHeight(),
-        SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        SWP_NOACTIVATE | SWP_SHOWWINDOW
+    );
 
     ShowWindow(g_window, SW_SHOWNOACTIVATE);
     UpdateWindow(g_window);
@@ -1152,16 +1138,12 @@ static bool CreateClockWindow()
     return true;
 }
 
-static DWORD WINAPI ClockThread(LPVOID)
-{
+static DWORD WINAPI ClockThread(LPVOID) {
     PeekMessageW(nullptr, nullptr, WM_USER, WM_USER, PM_NOREMOVE);
 
-    while (!g_unloading)
-    {
-        if (!CreateClockWindow())
-        {
-            for (int i = 0; i < 20 && !g_unloading; i++)
-            {
+    while (!g_unloading) {
+        if (!CreateClockWindow()) {
+            for (int i = 0; i < 20 && !g_unloading; i++) {
                 Sleep(500);
             }
 
@@ -1172,14 +1154,13 @@ static DWORD WINAPI ClockThread(LPVOID)
 
         while (
             !g_unloading &&
-            GetMessageW(&msg, nullptr, 0, 0) > 0)
-        {
+            GetMessageW(&msg, nullptr, 0, 0) > 0
+        ) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
 
-        if (g_window)
-        {
+        if (g_window) {
             DestroyWindow(g_window);
             g_window = nullptr;
         }
@@ -1189,15 +1170,15 @@ static DWORD WINAPI ClockThread(LPVOID)
 
     UnregisterClassW(
         L"NoctisClockWindow",
-        GetModuleHandleW(nullptr));
+        GetModuleHandleW(nullptr)
+    );
 
     Wh_Log(L"NOCTIS: Clock thread stopped");
 
     return 0;
 }
 
-BOOL Wh_ModInit()
-{
+BOOL Wh_ModInit() {
     g_unloading = false;
 
     LoadSettings();
@@ -1209,8 +1190,7 @@ BOOL Wh_ModInit()
     return TRUE;
 }
 
-void Wh_ModAfterInit()
-{
+void Wh_ModAfterInit() {
     Wh_Log(L"NOCTIS: Explorer initialization completed");
 
     g_thread = CreateThread(
@@ -1219,13 +1199,14 @@ void Wh_ModAfterInit()
         ClockThread,
         nullptr,
         0,
-        &g_threadId);
+        &g_threadId
+    );
 
-    if (!g_thread)
-    {
+    if (!g_thread) {
         Wh_Log(
             L"NOCTIS: Failed to create thread: %lu",
-            GetLastError());
+            GetLastError()
+        );
 
         return;
     }
@@ -1233,37 +1214,34 @@ void Wh_ModAfterInit()
     Wh_Log(L"NOCTIS: Clock thread started");
 }
 
-void Wh_ModSettingsChanged()
-{
+void Wh_ModSettingsChanged() {
     LoadSettings();
 
-    if (g_window && IsWindow(g_window))
-    {
+    if (g_window && IsWindow(g_window)) {
         PostMessageW(
             g_window,
             WM_NOCTIS_SETTINGS_CHANGED,
             0,
-            0);
+            0
+        );
     }
 }
 
-void Wh_ModUninit()
-{
+void Wh_ModUninit() {
     Wh_Log(L"NOCTIS: Mod shutdown started");
 
     g_unloading = true;
 
-    if (g_threadId)
-    {
+    if (g_threadId) {
         PostThreadMessageW(
             g_threadId,
             WM_QUIT,
             0,
-            0);
+            0
+        );
     }
 
-    if (g_thread)
-    {
+    if (g_thread) {
         WaitForSingleObject(g_thread, 5000);
         CloseHandle(g_thread);
         g_thread = nullptr;
